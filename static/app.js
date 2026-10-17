@@ -13,7 +13,7 @@ let statusTimer = null;
 const say = message => {
   if(statusTimer!==null)clearTimeout(statusTimer);
   const box=$('#status');box.textContent=message;
-  statusTimer=message?setTimeout(()=>{box.textContent='';statusTimer=null;},5000):null;
+  statusTimer=message && !busy?setTimeout(()=>{box.textContent='';statusTimer=null;},5000):null;
 };
 function showError(error) {
   const message = error?.message || '요청을 완료하지 못했습니다.';
@@ -63,7 +63,7 @@ async function restoreSession() {
 async function api(path, data) {
   if (busy) throw Error('진행 중인 요청을 기다려 주세요.');
   busy = true;
-  const processingMessage = path === '/api/resolve-official' ? '공식 성분과 함량을 확인하고 있습니다…' : path === '/api/product-support' ? '제품 주의사항을 불러오고 있습니다…' : '요청을 처리하고 있습니다…';
+  const processingMessage = path === '/api/analyze-and-match' ? '사진 인식과 공식 제품 검색 중…' : path === '/api/check-duplicates' || path === '/api/demo-duplicates' ? '확인한 제품의 공식 성분 비교 중…' : path === '/api/resolve-official' ? '공식 성분과 함량을 확인하고 있습니다…' : path === '/api/product-support' ? '제품 주의사항을 불러오고 있습니다…' : '요청을 처리하고 있습니다…';
   say(processingMessage);
   document.querySelectorAll('button').forEach(b => { b.dataset.disabledBefore = String(b.disabled); b.disabled = true; });
   const controller = new AbortController();
@@ -127,7 +127,7 @@ function invalidate() {
   lastReport = null;
   $('#download').disabled = true;
   $('#scenarioConsent').checked = false;
-  $('#result').textContent = '입력이 변경되었습니다. 가정을 확인하고 다시 계산하세요.';
+  $('#result').textContent = '제품 목록 또는 입력값이 변경되었습니다. 제품을 확인하고 성분 확인하기를 다시 눌러 주세요.';
 }
 
 function strengthLabel(value) {
@@ -243,7 +243,7 @@ let batchRunning = false;
 let photoGroups = [];
 let nextGroupId = 0;
 function renderBatchQueue() {
-  $('#batchChoices').innerHTML = photoGroups.map((group,displayIndex)=>{
+  $('#batchChoices').innerHTML = photoGroups.slice().sort((a,b)=>(a.status==='applied')-(b.status==='applied')).map((group,displayIndex)=>{
     const finished=group.status==='applied';
     return '<div class="photo-choice-row"><details class="photo-choice" '+(!finished?'open':'')+'><summary>'+'사진 '+(displayIndex+1)+' · '+esc(group.filename)+' · '+esc(finished?'목록에 추가됨':group.status==='error'?'분석 실패':group.status==='processing'?'처리 중':group.status==='empty'?'제품 미확인':'제품 선택 필요')+'</summary>'+
       (group.message?'<p>'+esc(group.message)+'</p>':'')+
@@ -339,6 +339,7 @@ async function analyzePhotoFiles(files,readPhoto) {
     $('#batchProgress').textContent=files.length+'장 처리 완료 · 선택 대기 '+remaining+'장 · 실패/미확인 '+groups.filter(g=>['error','empty'].includes(g.status)).length+'장';
     $('#photoStep').scrollIntoView({behavior:'smooth'});
     say('사진 처리를 완료했습니다. 사진별 선택 항목과 제품 목록을 확인하세요.');
+    if (typeof window !== 'undefined' && window.runflowUI) window.runflowUI.navigate('review');
   }
 }
 $('#analyze').onclick = async () => {
@@ -359,6 +360,7 @@ $('#jsonImport').onchange = async event => {
     const imported = JSON.parse(await file.text());
     searchName = ''; page = 1;
     await renderCandidates(await api('/api/import-and-match', {extracted:imported.extracted || imported}));
+    if (typeof window !== 'undefined' && window.runflowUI) window.runflowUI.navigate('review');
   } catch (error) { showError(error); }
   event.target.value = '';
 };
@@ -646,6 +648,7 @@ function goToStep(step) {
   });
   if(step===1) $('main').scrollTo?.({top:0,behavior:'smooth'});
   else $('#'+['photoStep','basket','resultStep'][step-1]).scrollIntoView({behavior:'smooth',block:'start'});
+  if (typeof window !== 'undefined' && window.runflowUI) window.runflowUI.navigate(step===3?'results':'review');
   return true;
 }
 $('#nextToQuantity').onclick=checkDuplicates;
@@ -753,9 +756,101 @@ function dashboardResultHtml(report,productCards,details) {
   const over=compared.filter(i=>i.criterion_status==='exceeded').length;
   const unknown=dose?(dose.ingredients || []).length-compared.length:report.ingredients.length;
   const dup=report.ingredients.filter(i=>i.duplicate);
-  const metrics='<div class="dashboard-metrics"><article><span>겹치는 성분</span><strong>'+dup.length+'<small>종</small></strong><p>'+ (dup.length?dup.map(i=>esc(i.ingredient)).join(' · '):'확인한 성분에서 중복 없음')+'</p></article><article><span>공식 하루 기준 초과</span><strong>'+over+'<small>종</small></strong><p>공통 기준으로 확인한 항목</p></article><article><span>공식 하루 기준 미판정</span><strong>'+unknown+'<small>종</small></strong><p>기준·수량·함량 미확인 포함</p></article></div>';
+  const metrics='<div class="dashboard-metrics"><article><span>겹치는 성분</span><strong>'+dup.length+'<small>종</small></strong><p>'+ (dup.length?dup.map(i=>esc(i.ingredient)).join(' · '):'확인한 성분에서 중복 없음')+'</p></article><article><span>공식 하루 기준 초과</span><strong>'+(dose?over:'—')+'<small>'+(dose?'종':'')+'</small></strong><p>'+(dose?'공통 기준으로 확인한 항목':'용량 비교 데이터 없음')+'</p></article><article><span>공식 하루 기준 미판정</span><strong>'+(dose?unknown:'—')+'<small>'+(dose?'종':'')+'</small></strong><p>'+(dose?'기준·수량·함량 미확인 포함':'성분 중복 결과를 확인하세요')+'</p></article></div>';
   const duplicateList=dup.length?'<div class="dashboard-duplicate-note"><strong>같은 성분이 여러 약에 포함돼 있어요.</strong><p>'+dup.map(i=>esc(i.ingredient)+': '+i.products.map(p=>esc(p.name)).join(' · ')).join('<br>')+'</p></div>':'<p class="muted">확인한 성분에서 중복이 발견되지 않았습니다. 병용 가능을 의미하지 않습니다.</p>';
   const comparison=dose?singleDosePreviewHtml(dose).replace('<details class="result-disclosure single-dose-preview">','<details open class="result-disclosure single-dose-preview">'):'<p class="muted">이 결과는 성분 중복 확인입니다. 공식 용량 기준 비교 데이터는 없습니다.</p>';
   const drugs=(report.products || []).map(p=>'<article class="dashboard-drug"><strong>'+esc(p.name)+'</strong><div class="ingredient-tags">'+report.ingredients.filter(i=>i.products.some(x=>x.code===p.code)).map(i=>'<span class="'+(i.duplicate?'duplicate':'')+'">'+esc(i.ingredient)+'</span>').join('')+'</div></article>').join('');
   return '<div class="dashboard-caption"><h3>확인 결과</h3><p>약 '+report.product_count+'개 · 공식 성분 '+report.ingredients.length+'종을 확인했어요.</p></div>'+metrics+'<div class="result-dashboard-grid"><section class="dashboard-panel"><h3>성분별 비교</h3>'+duplicateList+comparison+'</section><aside class="dashboard-panel"><h3>약별 성분</h3>'+drugs+'<p class="muted">진한 태그는 다른 약과 겹치는 성분입니다.</p><details class="result-disclosure"><summary>제품별 용법·주의사항</summary><div class="detail-content">'+productCards+'</div></details></aside></div><details class="result-disclosure dashboard-all-details"><summary>전체 결과·근거 자세히 보기</summary><div class="detail-content">'+details+'</div></details>';
 }
+
+// Presentation layer: move existing controls once; retain their values and handlers.
+function initializePageUI() {
+  const main=document.querySelector('main');
+  const upload=document.querySelector('.photo-analysis-panel');
+  const review=document.querySelector('.product-review-panel');
+  const profile=document.querySelector('.user-info-panel');
+  const fieldset=document.querySelector('#userProfileDialog .user-profile');
+  document.querySelector('#profilePage').append(profile,fieldset);
+  profile.querySelector('h3').textContent='필요한 정보만 입력하세요';
+  document.querySelector('#openUserProfile').hidden=true;
+  document.querySelector('.wizard-actions').classList.add('review-actions');
+  review.append(document.querySelector('.review-actions'),$('#stepOneHint'));
+  // Keep the legacy dialog intact for compatibility; the optional fields live on their page.
+  $('#openUserProfile').onclick=()=>{navigate('profile');$('#ageYears').focus();};
+  document.querySelector('header .logo').setAttribute('href','#home');
+  document.querySelector('header .logo').dataset.page='home';
+  document.querySelector('header .logo').innerHTML='<span class="brand-mark">+</span> Runflow';
+  const pages={
+    home:['시작하기','약 성분 확인, 차근차근.','사진 속 제품을 확인하고 공식 성분을 비교하세요.'],
+    upload:['01 · 약 등록','어떤 약을 확인할까요?','한 사진에 여러 약이 있어도, 여러 장을 올려도 괜찮아요.'],
+    review:['02 · 제품 확인','사진과 같은 제품인지 확인해요.','선택이 필요한 후보를 확인하고 비교할 제품을 정리하세요.'],
+    results:['03 · 분석 결과','확인한 성분을 한눈에.','중복 성분과 공식 자료에서 확인된 정보를 살펴보세요.'],
+    profile:['선택 입력','사용자 정보','중복 성분 확인은 나이·체중 입력 없이도 가능합니다.']
+  };
+  let active='home';
+  let hadResult=false;
+  function sync() {
+    const count=photoGroups.filter(g=>g.status==='choice').length;
+    $('#reviewCount').textContent=count?count+' 선택 필요':basket.length+'개';
+    $('#historyCount').textContent=photoGroups.length+'건';
+    $('#historyPanel').hidden=!photoGroups.length;
+    $('#historyPanel').open=photoGroups.some(g=>g.status!=='applied');
+    $('#reviewEmpty').hidden=Boolean(basket.length || photoGroups.length || candidates.length);
+    if(lastReport)hadResult=true;
+    if(active==='results') {
+      $('#resultStep').hidden=!lastReport;
+      $('#emptyResults').hidden=Boolean(lastReport);
+      $('#emptyResultHelp').textContent=hadResult?'제품 목록 또는 입력값이 변경되었습니다. 제품 확인에서 성분 확인하기를 다시 눌러 주세요.':'제품을 확인한 뒤 ‘성분 확인하기’를 누르면 결과가 표시됩니다.';
+    }
+    const running=busy || batchRunning || selectingProduct;
+    $('#workProgress').hidden=!running;
+    main.setAttribute('aria-busy',String(running));
+    if(running)$('#workProgressText').textContent=[$('#batchProgress').textContent,$('#status').textContent].filter(Boolean).join(' · ') || '제품 정보를 확인하고 있습니다…';
+  }
+  function navigate(name,{focus=true,hash=true}={}) {
+    if(!pages[name])name='home';
+    if(busy || batchRunning || selectingProduct){say('진행 중인 작업이 끝난 뒤 이동해 주세요.');return false;}
+    active=name;
+    $('#homePage').hidden=name!=='home';
+    $('#profilePage').hidden=name!=='profile';
+    $('#photoStep').hidden=!['upload','review'].includes(name);
+    upload.hidden=name!=='upload';review.hidden=name!=='review';
+    $('#resultStep').hidden=name!=='results' || !lastReport;
+    $('#emptyResults').hidden=name!=='results' || Boolean(lastReport);
+    $('#basket').hidden=true;
+    const [eyebrow,title,description]=pages[name];
+    $('#pageEyebrow').textContent=eyebrow;$('#pageTitle').textContent=title;$('#pageDescription').textContent=description;
+    document.querySelectorAll('.page-nav [data-page]').forEach(link=>{
+      if(link.dataset.page===name)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+    });
+    document.body.classList.remove('menu-open');$('#menuToggle').setAttribute('aria-expanded','false');
+    if(hash && location.hash!=='#'+name)history.replaceState(null,'','#'+name);
+    sync();
+    if(focus){$('#pageTitle').focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'});}
+    return true;
+  }
+  window.runflowUI={navigate,sync};
+  const loadDemo=$('#demo').onclick;
+  $('#demo').onclick=async event=>{await loadDemo(event);if(demoMode && basket.length)navigate('review');};
+  document.addEventListener('click',event=>{
+    const link=event.target.closest('[data-page]');
+    if(link){event.preventDefault();navigate(link.dataset.page);}
+  });
+  $('#menuToggle').onclick=()=>{
+    const open=document.body.classList.toggle('menu-open');$('#menuToggle').setAttribute('aria-expanded',String(open));
+  };
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape' && document.body.classList.contains('menu-open')){
+      document.body.classList.remove('menu-open');$('#menuToggle').setAttribute('aria-expanded','false');$('#menuToggle').focus();
+    }
+  });
+  window.addEventListener('hashchange',()=>{
+    if(!navigate(location.hash.slice(1),{hash:false}))history.replaceState(null,'','#'+active);
+  });
+  // Observe existing render targets; do not initiate requests or change analysis data.
+  const observer=new MutationObserver(sync);
+  ['batchChoices','stepOneProducts','result','status','batchProgress','basketList'].forEach(id=>observer.observe($('#'+id),{childList:true,subtree:true,characterData:true}));
+  observer.observe($('#analyze'),{attributes:true,attributeFilter:['disabled']});
+  navigate(location.hash.slice(1) || 'home',{focus:false});
+}
+if(typeof document.getElementById==='function')initializePageUI();
