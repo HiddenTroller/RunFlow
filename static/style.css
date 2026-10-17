@@ -146,3 +146,6 @@ body.page-app #resultStep>.sectionhead,body.page-app #resultStep>.sectionhead h2
 
 /* Keep the existing reference graph above result summaries and evidence. */
 .reference-overview{margin-bottom:20px}.reference-overview .single-dose-preview{margin:0}
+
+/* Supplied medicineat artwork: preserve the original aspect ratio. */
+.page-app .brand-logo{display:block;width:100%;height:auto;object-fit:contain}.page-app .sidebar-brand .brand-logo{max-width:200px}.page-app header .logo{width:210px;max-width:100%}.page-app header .logo .brand-logo{width:100%;height:auto}@media(max-width:760px){.page-app header .logo{width:170px}}

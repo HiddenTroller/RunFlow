@@ -8,6 +8,7 @@ import secrets
 import socket
 import webbrowser
 import hashlib
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,6 +16,7 @@ from urllib.request import build_opener, ProxyHandler
 from urllib.parse import urlsplit
 
 from config import ROOT, settings
+from public_limits import PublicRequestLimits, RateLimitError
 from mfds_client import MFDSClient, ServiceError
 from studio_client import analyze_photo, CONFIG_POLICY
 from calculator import calculate
@@ -27,7 +29,7 @@ from workflow import AnalysisWorkflow
 TOKEN = secrets.token_urlsafe(32)
 ALLOWED_HOST = ''
 PUBLIC = False  # Render 등 공개 배포: https, 0.0.0.0 바인딩, 보완 데이터 등록 차단
-PASSWORD = ''   # APP_PASSWORD. 값이 있으면 모든 요청에 Basic 인증을 요구합니다.
+PUBLIC_LIMITS = PublicRequestLimits()
 STATIC = ROOT / 'static'
 WORKFLOW = AnalysisWorkflow()
 SINGLE_DOSE = SingleDoseService(WORKFLOW)
@@ -121,8 +123,9 @@ def dispatch_post(path, data):
             raise ServiceError('사진 데이터 형식이 잘못되었습니다.') from None
         if not content or len(content) > 10 * 1024 * 1024:
             raise ServiceError('사진 한 장은 10MB 이하로 입력하세요.')
-        return (WORKFLOW.analyze_and_match(content, data.get('mime', ''))
-                if path == '/api/analyze-and-match' else analyze_photo(content, data.get('mime', '')))
+        with (PUBLIC_LIMITS.analysis() if PUBLIC else nullcontext()):
+            return (WORKFLOW.analyze_and_match(content, data.get('mime', ''))
+                    if path == '/api/analyze-and-match' else analyze_photo(content, data.get('mime', '')))
     if path == '/api/match-search':
         page = int(data.get('page', 1))
         if not 1 <= page <= 1000:
@@ -193,11 +196,13 @@ class Handler(BaseHTTPRequestHandler):
         # API 키, 제품 검색어, 사진 내용 등이 요청 로그에 남지 않도록 합니다.
         pass
 
-    def send(self, status, payload, mime='application/json; charset=utf-8'):
+    def send(self, status, payload, mime='application/json; charset=utf-8', retry_after=None):
         raw = json.dumps(payload, ensure_ascii=False).encode() if isinstance(payload, (dict, list)) else payload
         self.send_response(status)
         self.send_header('Content-Type', mime)
         self.send_header('Content-Length', str(len(raw)))
+        if retry_after is not None:
+            self.send_header('Retry-After', str(retry_after))
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
@@ -210,28 +215,7 @@ class Handler(BaseHTTPRequestHandler):
     def valid_host(self):
         return self.headers.get('Host') == ALLOWED_HOST
 
-    def authorized(self):
-        if not PASSWORD:
-            return True
-        header = self.headers.get('Authorization', '')
-        try:
-            given = base64.b64decode(header.removeprefix('Basic '), validate=True).decode('utf-8').partition(':')[2]
-        except ValueError:
-            return False
-        return hmac.compare_digest(given.encode(), PASSWORD.encode())
-
-    def require_auth(self):
-        if self.authorized():
-            return False
-        self.send_response(401)
-        self.send_header('WWW-Authenticate', 'Basic realm="runningflow", charset="UTF-8"')
-        self.send_header('Content-Length', '0')
-        self.end_headers()
-        return True
-
     def do_GET(self):
-        if self.require_auth():
-            return
         if not self.valid_host():
             self.send(403, {'error': '허용되지 않은 호스트입니다.'})
             return
@@ -242,7 +226,8 @@ class Handler(BaseHTTPRequestHandler):
         assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                   '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                   '/style.css': ('style.css', 'text/css; charset=utf-8'),
-                  '/sample.json': ('sample.json', 'application/json; charset=utf-8')}
+                  '/sample.json': ('sample.json', 'application/json; charset=utf-8'),
+                  '/brand-logo.png': ('brand-logo.png', 'image/png')}
         if path not in assets:
             self.send(404, {'error': '페이지를 찾을 수 없습니다.'})
             return
@@ -256,8 +241,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, raw, mime)
 
     def do_POST(self):
-        if self.require_auth():
-            return
         if (not self.valid_host() or self.headers.get('Origin') != ('https://' if PUBLIC else 'http://') + ALLOWED_HOST
                 or not hmac.compare_digest(self.headers.get('X-App-Token', ''), TOKEN)):
             self.send(403, {'error': '이 앱 화면에서 요청해 주세요.'})
@@ -270,8 +253,12 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ServiceError('요청 형식을 확인하세요.')
             path = urlsplit(self.path).path
+            if PUBLIC:
+                PUBLIC_LIMITS.api_request()
             result = dispatch_post(path, data)
             self.send(200, result)
+        except RateLimitError as error:
+            self.send(429, {'error': str(error)}, 'application/json; charset=utf-8', error.retry_after)
         except ServiceError as error:
             self.send(400, {'error': str(error)})
         except (json.JSONDecodeError, ValueError, TypeError, KeyError):
@@ -291,18 +278,15 @@ class LocalHTTPServer(ThreadingHTTPServer):
 
 
 def run():
-    global ALLOWED_HOST, PUBLIC, PASSWORD
+    global ALLOWED_HOST, PUBLIC
     parser = argparse.ArgumentParser(description='러닝플로우 약품 성분 확인')
     parser.add_argument('--no-browser', action='store_true')
     args = parser.parse_args()
     conf = settings()
     port = int(conf.get('PORT', '8767'))
-    PASSWORD = conf.get('APP_PASSWORD', '')
     # Render는 RENDER_EXTERNAL_HOSTNAME을 자동으로 넣습니다. 다른 도메인은 PUBLIC_HOST로 지정합니다.
     public_host = conf.get('PUBLIC_HOST') or conf.get('RENDER_EXTERNAL_HOSTNAME', '')
     if public_host:
-        if not PASSWORD:
-            raise SystemExit('공개 배포에는 APP_PASSWORD 환경변수가 필요합니다. 키가 노출되지 않도록 실행을 중단합니다.')
         PUBLIC, ALLOWED_HOST, bind = True, public_host, '0.0.0.0'
         args.no_browser = True
     else:

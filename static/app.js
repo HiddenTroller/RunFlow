@@ -779,7 +779,7 @@ function initializePageUI() {
   $('#openUserProfile').onclick=()=>{navigate('profile');$('#ageYears').focus();};
   document.querySelector('header .logo').setAttribute('href','#home');
   document.querySelector('header .logo').dataset.page='home';
-  document.querySelector('header .logo').innerHTML='<span class="brand-mark">+</span> Runflow';
+  document.querySelector('header .logo').innerHTML='<img class="brand-logo" src="/brand-logo.png" alt="medicineat" width="2098" height="749">';
   const pages={
     home:['시작하기','약 성분 확인, 차근차근.','사진 속 제품을 확인하고 공식 성분을 비교하세요.'],
     upload:['01 · 약 등록','어떤 약을 확인할까요?','한 사진에 여러 약이 있어도, 여러 장을 올려도 괜찮아요.'],
