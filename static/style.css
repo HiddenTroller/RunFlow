@@ -149,3 +149,71 @@ body.page-app #resultStep>.sectionhead,body.page-app #resultStep>.sectionhead h2
 
 /* Supplied medicineat artwork: preserve the original aspect ratio. */
 .page-app .brand-logo{display:block;width:100%;height:auto;object-fit:contain}.page-app .sidebar-brand .brand-logo{max-width:200px}.page-app header .logo{width:210px;max-width:100%}.page-app header .logo .brand-logo{width:100%;height:auto}@media(max-width:760px){.page-app header .logo{width:170px}}
+
+/* Readability baseline: explicit text states and generously sized controls. */
+body.crimson-app.page-app{font-size:18px;line-height:1.7;color:#30252b}
+body.crimson-app.page-app :is(p,li,label,summary,button,a,input,select,textarea,small,td,th,span){font-size:18px;line-height:1.65}
+body.crimson-app.page-app :is(p,li,label,td,th){overflow-wrap:anywhere}
+body.crimson-app.page-app :is(.muted,small,.profile-design-note,.lead,#saveNotice,footer,.sidebar-bottom,.nav-label,#pageDescription,#stepOneHint,.photo-memory-note){color:#51434c!important;font-size:18px}
+body.crimson-app.page-app :is(h2,h3){font-size:28px;line-height:1.4;letter-spacing:-.6px}
+body.crimson-app.page-app :is(.medicine-name,.ingredient-name,.duplicate-ingredient h4,.readable-drug h4,.result-product-heading h4,.result-product-card>summary,.ingredient-tags span,.priority-item h4){font-size:20px;line-height:1.5;color:#30252b}
+body.crimson-app.page-app #pageTitle{font-size:32px}
+body.crimson-app.page-app .dashboard-caption h3{font-size:28px;color:#30252b}
+body.crimson-app.page-app :is(button,.profile-trigger,.demo-entry){min-height:48px;min-width:48px;padding:10px 18px;font-size:18px;line-height:1.5;margin:6px;border-radius:10px;white-space:normal}
+body.crimson-app.page-app :is(button.primary,#nextToQuantity,#analyze){min-height:56px;padding:13px 22px;font-size:18px;font-weight:700}
+body.crimson-app.page-app button:disabled{color:#66545e;background:#eee7eb;border-color:#aa939f;opacity:1}
+body.crimson-app.page-app :is(.bulk-clear-actions,.wizard-actions,.basket-actions,.upload-next,.product-reference-actions,.profile-modal-actions){gap:12px;flex-wrap:wrap}
+body.crimson-app.page-app :is(input:not([type=checkbox]):not([type=radio]),select,textarea){min-height:48px;font-size:18px;color:#30252b}
+body.crimson-app.page-app :is(input,textarea)::placeholder{color:#66545e;opacity:1}
+body.crimson-app.page-app :is(input[type=checkbox],input[type=radio]){width:24px;height:24px;flex:none;accent-color:#862633}
+body.crimson-app.page-app :is(.check,.product-option){min-height:48px;align-items:center;gap:12px;padding-block:12px}
+body.crimson-app.page-app :is(.notice,.dose-disclaimer,.result-limits){font-size:18px;line-height:1.7;background:#fff8e8;color:#634500;border:1px solid #a58643;border-radius:10px;padding:18px 20px}
+body.crimson-app.page-app :is(.notice p,.dose-disclaimer p,.result-limits p){color:#634500}
+body.crimson-app.page-app :is(.danger,.text-status.exceeded){color:#992c25;font-size:18px;font-weight:600}
+body.crimson-app.page-app :is(summary,.page-nav a,a){color:#862633}
+body.crimson-app.page-app .page-nav a{min-height:52px;font-size:18px;flex-wrap:wrap;padding:12px}
+body.crimson-app.page-app .page-nav a[aria-current=page]{color:#681c28;background:#f7eaf0}
+body.crimson-app.page-app .nav-label{color:#51434c;letter-spacing:.5px}
+body.crimson-app.page-app .sidebar-brand span{font-size:18px;color:#51434c}
+body.crimson-app.page-app .sidebar-bottom{font-size:18px}
+body.crimson-app.page-app .home-flow article{padding:24px}
+body.crimson-app.page-app .home-flow h3{font-size:24px}
+body.crimson-app.page-app .upload-next{display:flex;align-items:center;justify-content:flex-start}
+body.crimson-app.page-app :is(.photo-workspace .muted,.product-review-panel>p,.profile-design-note,.file-label small){font-size:18px;color:#51434c;line-height:1.7}
+body.crimson-app.page-app :is(.analysis-reading,.technical,.support-guide,.support-guide summary,.profile-preview,.profile-modal-heading small,.step-product small){font-size:18px}
+body.crimson-app.page-app .photo-choice>summary{font-size:20px;padding-right:0}
+body.crimson-app.page-app .photo-choice-row .remove-photo-log{position:static;margin:12px 6px;min-height:48px;font-size:18px}
+body.crimson-app.page-app .photo-choice-row{margin:20px 0;padding-bottom:12px;border-bottom:1px solid #d7c8cf}
+body.crimson-app.page-app #stepOneProducts .step-product{gap:16px;align-items:center;padding:20px 0;flex-wrap:wrap}
+body.crimson-app.page-app .product-identity{display:flex;align-items:center;gap:20px;min-width:0}
+body.crimson-app.page-app .step-product>.product-identity{flex:1 1 100%;padding:0}
+body.crimson-app.page-app .product-photo-link{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:148px;flex:0 0 148px;min-height:48px;border:1px solid #bca7b2;border-radius:10px;padding:8px;background:#fff;color:#862633;text-align:center;text-decoration:underline}
+body.crimson-app.page-app .product-photo-link .product-thumbnail{width:128px;height:100px;display:block;object-fit:contain;background:#fff}
+body.crimson-app.page-app .photo-unavailable{display:inline-flex;align-items:center;justify-content:center;flex:0 0 148px;min-height:100px;border:1px dashed #b7a1ad;border-radius:10px;background:#faf7f8;color:#51434c;text-align:center;padding:12px}
+body.crimson-app.page-app .dashboard-panel{padding:28px;border:1px solid #d7c8cf;margin-bottom:24px;background:#fff;border-radius:14px}
+body.crimson-app.page-app .dashboard-panel>h3{margin:0 0 24px;font-size:28px;color:#30252b}
+body.crimson-app.page-app .duplicate-ingredient{padding:20px 0;border-top:1px solid #d7c8cf}
+body.crimson-app.page-app .duplicate-ingredient:first-of-type{border-top:0;padding-top:0}
+body.crimson-app.page-app .duplicate-ingredient h4{margin:0 0 12px;color:#862633;font-size:20px}
+body.crimson-app.page-app .text-status{display:block;color:#42323c;font-size:18px;margin:8px 0;line-height:1.7}
+body.crimson-app.page-app .related-drugs{list-style:none;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:20px 0 0}
+body.crimson-app.page-app .related-drugs li{display:flex;align-items:center;gap:18px;min-width:0}
+body.crimson-app.page-app .readable-drug{padding:24px 0;border-top:1px solid #d7c8cf}
+body.crimson-app.page-app .readable-drug h4{margin:0 0 12px}
+body.crimson-app.page-app .readable-ingredients{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:16px}
+body.crimson-app.page-app .readable-ingredients li{padding:16px 20px;background:#faf7f8;border:1px solid #dfd1d8;border-radius:10px}
+body.crimson-app.page-app .readable-ingredients .ingredient-name{display:block;color:#681c28;font-size:20px}
+body.crimson-app.page-app .result-next li{margin:16px 0}
+body.crimson-app.page-app .result-limits{margin-top:24px}
+body.crimson-app.page-app .result-limits h4{font-size:20px;margin:0 0 12px;color:#634500}
+body.crimson-app.page-app .reference-overview>summary,body.crimson-app.page-app .dashboard-all-details>summary{font-size:20px;min-height:48px;line-height:1.6;padding:8px 0}
+body.crimson-app.page-app :is(.single-dose-preview,.single-dose-preview summary,.dose-meter-row span,.dose-meter-row>small,.dose-meter-row>p,.unknown-meter,.dose-state,.mini-reference>summary,.history-panel>summary,.history-panel>summary span){font-size:18px!important;line-height:1.7}
+body.crimson-app.page-app .daily-max-block{height:auto;max-height:none;overflow:visible}
+body.crimson-app.page-app .scroll table{font-size:18px;min-width:640px}
+body.crimson-app.page-app :is(pre,.mini-reference pre,.compact-dose-details pre){font-size:18px;line-height:1.7;max-height:420px}
+body.crimson-app.page-app #status{font-size:18px!important;line-height:1.7}
+body.crimson-app.page-app :is(a,button,input,summary):focus-visible{outline:3px solid #681c28;outline-offset:4px}
+@media(max-width:1100px){body.crimson-app.page-app .related-drugs{grid-template-columns:1fr}.page-app .home-flow{grid-template-columns:1fr}}
+@media(max-width:760px){body.crimson-app.page-app .dashboard-panel{padding:22px 18px}body.crimson-app.page-app .related-drugs li,body.crimson-app.page-app .product-identity{gap:14px;flex-wrap:wrap}body.crimson-app.page-app .related-drugs .medicine-name{flex:1 1 150px}body.crimson-app.page-app .product-photo-link,body.crimson-app.page-app .photo-unavailable{width:132px;flex-basis:132px}body.crimson-app.page-app .product-photo-link .product-thumbnail{width:112px;height:90px}body.crimson-app.page-app :is(#menuToggle,.profile-trigger){font-size:18px}body.crimson-app.page-app #menuToggle{top:10px;left:6px}body.crimson-app.page-app .sidebar-bottom{margin-top:24px}body.crimson-app.page-app .app-sidebar{overflow-y:auto}body.crimson-app.page-app .product-identity>div{flex:1 1 170px}}
+body.crimson-app.page-app :is(.unknown-meter,.home-flow b,header>span,.profile-preview,.dose-meter-row>small){color:#51434c}body.crimson-app.page-app .dose-meter-row strong{font-size:20px}
+body.crimson-app.page-app .product-option>span,body.crimson-app.page-app .dose-evidence h4{font-size:20px}body.crimson-app.page-app input[type=file]::file-selector-button{min-height:48px;font:inherit;padding:10px 18px;margin:6px 12px 6px 0;color:#862633;background:#fff;border:1px solid #862633;border-radius:10px}
