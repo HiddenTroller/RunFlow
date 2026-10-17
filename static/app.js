@@ -812,6 +812,10 @@ function dashboardResultHtml(report,productCards,details) {
 // Presentation layer: move existing controls once; retain their values and handlers.
 function initializePageUI() {
   const main=document.querySelector('main');
+  // Put primary content before general guidance without changing reading order.
+  main.append(document.querySelector('main > .notice:not(#errorHelp)'),document.querySelector('main > .support-guide'),$('#saveNotice'),document.querySelector('main > footer'));
+  $('#resultStep .sectionhead h2').hidden=true;
+  $('#resultStep .sectionhead').append($('#backToQuantity'),$('#download'));
   const upload=document.querySelector('.photo-analysis-panel');
   const review=document.querySelector('.product-review-panel');
   const profile=document.querySelector('.user-info-panel');
