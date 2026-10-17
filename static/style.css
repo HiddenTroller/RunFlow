@@ -219,3 +219,6 @@ body.crimson-app.page-app :is(.unknown-meter,.home-flow b,header>span,.profile-p
 body.crimson-app.page-app .product-option>span,body.crimson-app.page-app .dose-evidence h4{font-size:20px}body.crimson-app.page-app input[type=file]::file-selector-button{min-height:48px;font:inherit;padding:10px 18px;margin:6px 12px 6px 0;color:#862633;background:#fff;border:1px solid #862633;border-radius:10px}
 body.crimson-app.page-app #resultStep>.wizard-actions:empty{display:none}body.crimson-app.page-app #resultStep>.sectionhead{gap:12px;flex-wrap:wrap;margin-bottom:24px}body.crimson-app.page-app #resultStep>.sectionhead>button{margin-inline:0}
 body.crimson-app.page-app .result-boundary{color:#51434c;font-size:18px;line-height:1.7;margin-top:24px}@media(max-width:760px){body.crimson-app.page-app .related-drugs li,body.crimson-app.page-app .readable-drug .product-identity{display:grid;grid-template-columns:132px minmax(0,1fr);gap:14px}body.crimson-app.page-app .related-drugs .medicine-name,body.crimson-app.page-app .readable-drug .product-identity>div{min-width:0}}
+
+/* Keep the brand only in the navigation sidebar. */
+body.crimson-app.page-app header .logo{display:none!important}body.crimson-app.page-app header{justify-content:flex-end}
