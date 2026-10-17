@@ -2,6 +2,44 @@ const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let token = '', busy = false, photoId = null, candidates = [], selected = null;
 let basket = [], lastReport = null, page = 1, searchName = '', demoMode = false;
+
+// Uploaded photos stay in this document's memory, never in API payloads or storage.
+const uploadedPhotoAssets = new Set();
+const candidatePhotoAssets = new Map();
+const productPhotoAssets = new Map();
+function rememberUploadPhoto(file) {
+  if(typeof Blob==='undefined' || !(file instanceof Blob) || typeof URL.createObjectURL!=='function')return null;
+  const photo={url:URL.createObjectURL(file),filename:String(file.name || '업로드 사진')};
+  uploadedPhotoAssets.add(photo);return photo;
+}
+function connectPhotoCandidates(result,photo) {
+  if(!photo)return;
+  for(const c of result.candidates || [])if(c.candidate_id)candidatePhotoAssets.set(c.candidate_id,photo);
+}
+function connectSelectedPhoto(candidate) {
+  const photo=candidatePhotoAssets.get(candidate.candidate_id);
+  const code=String(candidate.product.ITEM_SEQ);
+  if(photo && basket.some(p=>String(p.code)===code))productPhotoAssets.set(code,photo);
+}
+function pruneUploadPhotos() {
+  const productCodes=new Set(basket.map(p=>String(p.code)));
+  for(const code of productPhotoAssets.keys())if(!productCodes.has(code))productPhotoAssets.delete(code);
+  const candidateIds=new Set(photoGroups.flatMap(g=>(g.result?.candidates || []).map(c=>c.candidate_id)));
+  for(const id of candidatePhotoAssets.keys())if(!candidateIds.has(id))candidatePhotoAssets.delete(id);
+  const used=new Set([...photoGroups.map(g=>g.sourcePhoto),...productPhotoAssets.values()]);
+  for(const photo of uploadedPhotoAssets)if(!used.has(photo)){
+    URL.revokeObjectURL(photo.url);uploadedPhotoAssets.delete(photo);
+  }
+}
+function productPhotoHtml(code,name) {
+  const photo=productPhotoAssets.get(String(code));
+  if(!photo)return '<span class="photo-unavailable">사진 없음</span>';
+  return '<a class="product-photo-link" href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer" aria-label="'+esc(name)+' 업로드 사진 크게 보기"><img class="product-thumbnail" src="'+esc(photo.url)+'" alt="'+esc(name)+'을 확인한 업로드 사진"><span>사진 크게 보기</span></a>';
+}
+function resultWording(value) {
+  return String(value ?? '').replaceAll('비교 불완전','일부 약 정보를 읽지 못했어요').replaceAll('기준 미등록','비교할 기준이 없어 판단하지 못했어요');
+}
+
 function recoveryHint(message) {
   if (/만료|확인 정보/.test(message)) return '목록의 ‘공식 정보 다시 확인’을 누르세요. 사진은 다시 전송하지 않습니다.';
   if (/403|인증|키|한도/.test(message)) return '분석 상세의 연결 상태와 API 인증·사용량을 확인한 뒤 다시 시도하세요.';
@@ -13,7 +51,7 @@ let statusTimer = null;
 const say = message => {
   if(statusTimer!==null)clearTimeout(statusTimer);
   const box=$('#status');box.textContent=message;
-  statusTimer=message?setTimeout(()=>{box.textContent='';statusTimer=null;},5000):null;
+  statusTimer=message && !busy?setTimeout(()=>{box.textContent='';statusTimer=null;},5000):null;
 };
 function showError(error) {
   const message = error?.message || '요청을 완료하지 못했습니다.';
@@ -63,7 +101,7 @@ async function restoreSession() {
 async function api(path, data) {
   if (busy) throw Error('진행 중인 요청을 기다려 주세요.');
   busy = true;
-  const processingMessage = path === '/api/resolve-official' ? '공식 성분과 함량을 확인하고 있습니다…' : path === '/api/product-support' ? '제품 주의사항을 불러오고 있습니다…' : '요청을 처리하고 있습니다…';
+  const processingMessage = path === '/api/analyze-and-match' ? '사진 인식과 공식 제품 검색 중…' : path === '/api/check-duplicates' || path === '/api/demo-duplicates' ? '확인한 제품의 공식 성분 비교 중…' : path === '/api/resolve-official' ? '공식 성분과 함량을 확인하고 있습니다…' : path === '/api/product-support' ? '제품 주의사항을 불러오고 있습니다…' : '요청을 처리하고 있습니다…';
   say(processingMessage);
   document.querySelectorAll('button').forEach(b => { b.dataset.disabledBefore = String(b.disabled); b.disabled = true; });
   const controller = new AbortController();
@@ -127,7 +165,7 @@ function invalidate() {
   lastReport = null;
   $('#download').disabled = true;
   $('#scenarioConsent').checked = false;
-  $('#result').textContent = '입력이 변경되었습니다. 가정을 확인하고 다시 계산하세요.';
+  $('#result').textContent = '제품 목록 또는 입력값이 변경되었습니다. 제품을 확인하고 성분 확인하기를 다시 눌러 주세요.';
 }
 
 function strengthLabel(value) {
@@ -218,6 +256,7 @@ async function chooseProduct(event) {
   $('#selectionStatus').textContent = candidate.product.ITEM_NAME + ' — 공식 함량을 확인하고 있습니다.';
   try {
     await applySelected();
+    connectSelectedPhoto(candidate);updateStepOneProducts();
     $('#selectionStatus').textContent = basket.some(p => p.code === String(candidate.product.ITEM_SEQ))
       ? '선택한 제품이 아래 목록에 적용되었습니다. 제품명을 확인한 뒤 중복 성분 확인을 눌러 주세요.' : '';
   } catch (error) {
@@ -243,7 +282,8 @@ let batchRunning = false;
 let photoGroups = [];
 let nextGroupId = 0;
 function renderBatchQueue() {
-  $('#batchChoices').innerHTML = photoGroups.map((group,displayIndex)=>{
+  pruneUploadPhotos();
+  $('#batchChoices').innerHTML = photoGroups.slice().sort((a,b)=>(a.status==='applied')-(b.status==='applied')).map((group,displayIndex)=>{
     const finished=group.status==='applied';
     return '<div class="photo-choice-row"><details class="photo-choice" '+(!finished?'open':'')+'><summary>'+'사진 '+(displayIndex+1)+' · '+esc(group.filename)+' · '+esc(finished?'목록에 추가됨':group.status==='error'?'분석 실패':group.status==='processing'?'처리 중':group.status==='empty'?'제품 미확인':'제품 선택 필요')+'</summary>'+
       (group.message?'<p>'+esc(group.message)+'</p>':'')+
@@ -290,7 +330,7 @@ async function analyzePhotoFiles(files,readPhoto) {
   if(files.some(f=>!['image/jpeg','image/png','image/webp'].includes(f.type) || f.size>10*1024*1024))throw Error('사진은 장당 10MB 이하 JPG·PNG·WEBP만 지원합니다.');
   if(demoMode && basket.length)throw Error('예제 목록을 비운 뒤 실제 사진을 분석하세요.');
   batchRunning=true;$('#image').disabled=true;$('#jsonImport').disabled=true;updateProfileControls();
-  const groups=files.map(file=>({id:++nextGroupId,filename:file.name,status:'processing',message:'분석 대기',result:null}));
+  const groups=files.map(file=>({id:++nextGroupId,filename:file.name,sourcePhoto:rememberUploadPhoto(file),status:'processing',message:'분석 대기',result:null}));
   photoGroups.push(...groups);renderBatchQueue();
   $('#productPicker').hidden=true;$('#productPicker').open=false;
   try {
@@ -315,6 +355,8 @@ async function analyzePhotoFiles(files,readPhoto) {
             if(productIndex>0){photoGroups.push(productGroup);groups.push(productGroup);}
           }
           productGroup.result=productResult;
+          productGroup.sourcePhoto=group.sourcePhoto;
+          connectPhotoCandidates(productResult,group.sourcePhoto);
           try {
           const choices=productResult.candidates || [];
         if(choices.length===1 && Number(productResult.total ?? 1)===1 && !productResult.requires_selection && productResult.search_mode!=='similar') {
@@ -339,6 +381,7 @@ async function analyzePhotoFiles(files,readPhoto) {
     $('#batchProgress').textContent=files.length+'장 처리 완료 · 선택 대기 '+remaining+'장 · 실패/미확인 '+groups.filter(g=>['error','empty'].includes(g.status)).length+'장';
     $('#photoStep').scrollIntoView({behavior:'smooth'});
     say('사진 처리를 완료했습니다. 사진별 선택 항목과 제품 목록을 확인하세요.');
+    if (typeof window !== 'undefined' && window.runflowUI) window.runflowUI.navigate('review');
   }
 }
 $('#analyze').onclick = async () => {
@@ -359,6 +402,7 @@ $('#jsonImport').onchange = async event => {
     const imported = JSON.parse(await file.text());
     searchName = ''; page = 1;
     await renderCandidates(await api('/api/import-and-match', {extracted:imported.extracted || imported}));
+    if (typeof window !== 'undefined' && window.runflowUI) window.runflowUI.navigate('review');
   } catch (error) { showError(error); }
   event.target.value = '';
 };
@@ -433,6 +477,7 @@ function pendingOfficialAmounts(product) {
 }
 
 function renderBasket() {
+  pruneUploadPhotos();
   updateStepOneProducts();
   invalidate();
   $('#basketCount').textContent = basket.length + '개';
@@ -630,7 +675,7 @@ function renderComparisonResult(report) {
 // One task at a time: product identity, quantities, then computed result.
 let currentStep = 1;
 function updateStepOneProducts() {
-  $('#stepOneProducts').innerHTML = basket.length ? '<strong>추가한 제품 '+basket.length+'개</strong>'+basket.map((p,n)=>'<div class="step-product"><span>'+esc(p.name)+'</span><small>'+ (p.pending?'공식 함량 확인 필요':'제품 적용 완료')+'</small><button type="button" data-remove-step-product="'+n+'" aria-label="'+esc(p.name)+' 제품 제외">제외 ×</button></div>').join('') : '';
+  $('#stepOneProducts').innerHTML = basket.length ? '<strong>추가한 제품 '+basket.length+'개</strong>'+basket.map((p,n)=>'<div class="step-product"><span class="product-identity">'+productPhotoHtml(p.code,p.name)+'<strong class="medicine-name">'+esc(p.name)+'</strong></span><small>'+ (p.pending?'공식 함량 확인 필요':'제품 적용 완료')+'</small><button type="button" data-remove-step-product="'+n+'" aria-label="'+esc(p.name)+' 제품 제외">제외 ×</button></div>').join('') : '';
   $('#stepOneHint').textContent = basket.length ? '제품을 확인한 뒤 중복 성분 확인을 누르세요. 함량 미확인 제품도 공식 성분명으로 비교하며, 성분이 없는 제품은 결과에서 따로 표시합니다.' : '사진을 분석하고 제품을 추가하면 다음 단계로 이동할 수 있습니다.';
 }
 function goToStep(step) {
@@ -646,6 +691,7 @@ function goToStep(step) {
   });
   if(step===1) $('main').scrollTo?.({top:0,behavior:'smooth'});
   else $('#'+['photoStep','basket','resultStep'][step-1]).scrollIntoView({behavior:'smooth',block:'start'});
+  if (typeof window !== 'undefined' && window.runflowUI) window.runflowUI.navigate(step===3?'results':'review');
   return true;
 }
 $('#nextToQuantity').onclick=checkDuplicates;
@@ -708,17 +754,17 @@ $('#userProfileDialog').onclick=event=>{if(event.target!==$('#userProfileDialog'
 function singleDosePreviewHtml(report) {
   const daily=report.period==='day',period=daily?'하루':'1회';
   const schedules=(report.schedules || []).map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+esc(p.count.status==='known'?p.count.quantity+p.count.unit:(p.count.official_references || []).length?'조건별 공식 기준 있음':'확인 필요')+'</td><td>'+((p.count.official_references || []).length?'<strong class="conditional-reference-label">'+(p.count.status==='known'?'공식 하루 표시 근거':'조건 확인 후 적용할 공식 기준')+'</strong><pre>'+esc(p.count.official_references.join('\n'))+'</pre>':'')+'<details><summary>전체 원문·적용 상태</summary><pre>'+esc(p.count.evidence || p.directions_text || p.count.reason)+'</pre><p>'+esc(p.count.reason)+'</p></details></td></tr>').join('');
-  const rows=(report.ingredients || []).map(i=>'<tr><td>'+esc(i.ingredient)+(i.duplicate?'<small>동일 성분 중복</small>':'')+'</td><td>'+esc(i.total_mg!=null?i.total_mg+' mg':i.known_subtotal_mg!=null?'확인된 부분 '+i.known_subtotal_mg+' mg':'미확인')+'</td><td>'+esc(i.limit_mg?i.limit_mg+' mg · 성분 공통 기준':i.reference_mg?i.reference_mg+' mg · 제품 표시량 참고':'미확인')+'<small>'+esc(i.criterion_note)+'</small></td><td><span class="dose-state '+esc(i.reference_status || i.criterion_status)+'">'+esc(i.status_label)+'</span></td></tr>').join('');
+  const rows=(report.ingredients || []).map(i=>'<tr><td>'+esc(i.ingredient)+(i.duplicate?'<small>동일 성분 중복</small>':'')+'</td><td>'+esc(i.total_mg!=null?i.total_mg+' mg':i.known_subtotal_mg!=null?'확인된 부분 '+i.known_subtotal_mg+' mg':'미확인')+'</td><td>'+esc(i.limit_mg?i.limit_mg+' mg · 성분 공통 기준':i.reference_mg?i.reference_mg+' mg · 제품 표시량 참고':'미확인')+'<small>'+esc(resultWording(i.criterion_note))+'</small></td><td><span class="dose-state '+esc(i.reference_status || i.criterion_status)+'">'+esc(resultWording(i.status_label))+'</span></td></tr>').join('');
   const meters=(report.ingredients || []).map(i=>{
     const limit=Number(i.limit_mg || i.reference_mg),amount=Number(i.total_mg);
     const known=(i.comparison_complete ?? report.complete) && i.total_mg!=null && Number.isFinite(amount) && Number.isFinite(limit) && limit>0;
     const percent=known?amount/limit*100:null;
-    return '<div class="dose-meter-row"><div><strong>'+esc(i.ingredient)+'</strong><span>'+ (known?percent.toFixed(1)+'% · '+esc(i.total_mg)+' / '+esc(i.limit_mg || i.reference_mg)+' mg':'기준 또는 전체 합산량 미확인')+'</span></div>'+(known?'<div class="dose-meter-track '+(percent>100?'over':'')+'"><progress max="200" value="'+Math.min(200,percent)+'" aria-label="'+esc(i.ingredient)+' '+period+' 비교 기준 대비 비율"></progress><i></i></div><small>0% <span>기준 100%</span> 200% 이상</small>':'<div class="unknown-meter">비교 보류</div>')+'<p>'+ (i.reference_mg?'제품 표시량 참고 기준 · 공통 최대허용량 아님':i.limit_mg?'등록된 공식 성분 기준':'적용 가능한 공식 성분 기준 없음')+'</p></div>';
+    return '<div class="dose-meter-row"><div><strong>'+esc(i.ingredient)+'</strong><span>'+ (known?percent.toFixed(1)+'% · '+esc(i.total_mg)+' / '+esc(i.limit_mg || i.reference_mg)+' mg':'비교할 기준이나 전체 함량을 확인하지 못했어요')+'</span></div>'+(known?'<div class="dose-meter-track '+(percent>100?'over':'')+'"><progress max="200" value="'+Math.min(200,percent)+'" aria-label="'+esc(i.ingredient)+' '+period+' 비교 기준 대비 비율"></progress><i></i></div><small>0% <span>기준 100%</span> 200% 이상</small>':'<div class="unknown-meter">확인할 정보가 더 필요해요</div>')+'<p>'+ (i.reference_mg?'제품 표시량 참고 기준 · 공통 최대허용량 아님':i.limit_mg?'등록된 공식 성분 기준':'비교할 기준이 없어 판단하지 못했어요')+'</p></div>';
   }).join('');
   const disclaimer=daily?'공식 하루 표시 수량으로 비교한 참고 결과이며, 기준 미초과도 병용 안전을 뜻하지 않으므로 복용 전 의사·약사와 상담하세요.':'공식 용법의 최대 1회 수량으로 비교한 참고 결과이며, ‘기준 이내’도 병용 안전을 뜻하지 않으므로 복용 전 의사·약사와 상담하세요.';
   const exclusions=(report.excluded_products || []).map(p=>'<p>'+esc(p.name)+' · '+esc(p.reason)+'</p>').join('');
   const evidence=(report.ingredients || []).map(i=>'<article class="dose-evidence"><h4>'+esc(i.ingredient)+'</h4>'+i.contributions.map(c=>'<p>'+esc(c.product)+': '+esc(c.per_unit_mg)+' mg × '+esc(c.quantity || '미확인')+' = '+esc(c.mg===null?'미확인':c.mg+' mg')+'</p>').join('')+(i.criterion_sources || []).map(c=>'<p>'+esc(c.evidence)+(c.source_url?' <a href="'+esc(c.source_url)+'" target="_blank" rel="noopener noreferrer">공식 근거 ↗</a>':'')+'</p>').join('')+'</article>').join('');
-  return '<details class="result-disclosure single-dose-preview"><summary>공식 '+period+' 수량 자동 합산·기준 비교 <span>성인 가정 · 직접 수량 입력 없음</span></summary><div class="detail-content"><p class="notice amber">'+esc(report.notice)+'</p><p class="muted">성분 공통 기준을 우선 비교합니다. 공통 기준이 없을 때에는 조건이 맞는 선택 제품의 표시 용법량을 참고로 비교하며, 이를 공통 최대허용량으로 사용하지 않습니다.</p>'+(!report.complete?'<p class="danger">일부 제품의 '+period+' 수량·함량이 미확인입니다. 확인 가능한 성분은 개별 비교하고, 관련 제품의 수량·함량이 미확인인 성분만 보류합니다.</p>':'')+(report.error?'<p>'+esc(report.error)+'</p>':'')+'<details class="compact-dose-details"><summary>제품별 적용 수량·공식 용법 보기 ('+(report.schedules || []).length+'개)</summary><div class="scroll"><table><thead><tr><th>제품</th><th>'+period+' 가정 수량</th><th>공식 원문·미확인 사유</th></tr></thead><tbody>'+schedules+'</tbody></table></div>'+exclusions+'</details>'+(rows?'<div class="scroll"><table><thead><tr><th>성분</th><th>'+period+' 가정 합산량</th><th>'+period+' 비교 기준 · 종류</th><th>비교</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>자동 계산할 공식 수량·함량을 확인하지 못했습니다. 위의 중복 성분 결과는 계속 확인할 수 있습니다.</p>')+'<details class="compact-dose-details"><summary>제품별 공식 하루 기준 요약</summary>'+((report.schedules || []).map(p=>'<article class="dose-evidence"><h4>'+esc(p.name)+'</h4><p>'+esc(p.count.status==='known'?p.count.quantity+p.count.unit+' · 공식 하루 표시 수량':'조건별 기준 · 자동 합산 보류')+'</p><pre>'+esc((p.count.official_references || []).join('\n') || p.count.reason || '공식 원문 확인 필요')+'</pre></article>').join(''))+'</details><div class="dose-meters">'+meters+'</div><p class="dose-disclaimer">'+esc(disclaimer)+'</p><details class="compact-dose-details"><summary>전체 계산·기준 근거 보기</summary>'+evidence+'</details></div></details>';
+  return '<details class="result-disclosure single-dose-preview"><summary>공식 '+period+' 수량 자동 합산·기준 비교 <span>성인 가정 · 직접 수량 입력 없음</span></summary><div class="detail-content"><p class="notice amber">'+esc(report.notice)+'</p><p class="muted">성분 공통 기준을 우선 비교합니다. 공통 기준이 없을 때에는 조건이 맞는 선택 제품의 표시 용법량을 참고로 비교하며, 이를 공통 최대허용량으로 사용하지 않습니다.</p>'+(!report.complete?'<p class="danger">일부 제품의 '+period+' 수량·함량이 미확인입니다. 확인 가능한 성분은 개별 비교하고, 관련 제품의 수량·함량이 미확인인 성분만 보류합니다.</p>':'')+(report.error?'<p>'+esc(report.error)+'</p>':'')+'<div class="dose-meters">'+meters+'</div><p class="dose-disclaimer">'+esc(disclaimer)+'</p><details class="compact-dose-details"><summary>제품별 적용 수량·공식 용법 보기 ('+(report.schedules || []).length+'개)</summary><div class="scroll"><table><thead><tr><th>제품</th><th>'+period+' 가정 수량</th><th>공식 원문·미확인 사유</th></tr></thead><tbody>'+schedules+'</tbody></table></div>'+exclusions+'</details>'+(rows?'<div class="scroll"><table><thead><tr><th>성분</th><th>'+period+' 가정 합산량</th><th>'+period+' 비교 기준 · 종류</th><th>비교</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p>자동 계산할 공식 수량·함량을 확인하지 못했습니다. 위의 중복 성분 결과는 계속 확인할 수 있습니다.</p>')+'<details class="compact-dose-details"><summary>제품별 공식 하루 기준 요약</summary>'+((report.schedules || []).map(p=>'<article class="dose-evidence"><h4>'+esc(p.name)+'</h4><p>'+esc(p.count.status==='known'?p.count.quantity+p.count.unit+' · 공식 하루 표시 수량':'조건별 기준 · 자동 합산 보류')+'</p><pre>'+esc((p.count.official_references || []).join('\n') || p.count.reason || '공식 원문 확인 필요')+'</pre></article>').join(''))+'</details><details class="compact-dose-details"><summary>전체 계산·기준 근거 보기</summary>'+evidence+'</details></div></details>';
 }
 
 function clearPhotoHistory() {
@@ -748,14 +794,113 @@ function updateProfilePreview() {
   $('#profileWeightPreview').textContent=$('#weightKg').value?$('#weightKg').value+' kg':'미입력';
 }
 function dashboardResultHtml(report,productCards,details) {
-  const dose=report.daily_dose;
-  const compared=(dose?.ingredients || []).filter(i=>i.criterion_status==='exceeded' || i.criterion_status==='not_exceeded');
-  const over=compared.filter(i=>i.criterion_status==='exceeded').length;
-  const unknown=dose?(dose.ingredients || []).length-compared.length:report.ingredients.length;
-  const dup=report.ingredients.filter(i=>i.duplicate);
-  const metrics='<div class="dashboard-metrics"><article><span>겹치는 성분</span><strong>'+dup.length+'<small>종</small></strong><p>'+ (dup.length?dup.map(i=>esc(i.ingredient)).join(' · '):'확인한 성분에서 중복 없음')+'</p></article><article><span>공식 하루 기준 초과</span><strong>'+over+'<small>종</small></strong><p>공통 기준으로 확인한 항목</p></article><article><span>공식 하루 기준 미판정</span><strong>'+unknown+'<small>종</small></strong><p>기준·수량·함량 미확인 포함</p></article></div>';
-  const duplicateList=dup.length?'<div class="dashboard-duplicate-note"><strong>같은 성분이 여러 약에 포함돼 있어요.</strong><p>'+dup.map(i=>esc(i.ingredient)+': '+i.products.map(p=>esc(p.name)).join(' · ')).join('<br>')+'</p></div>':'<p class="muted">확인한 성분에서 중복이 발견되지 않았습니다. 병용 가능을 의미하지 않습니다.</p>';
-  const comparison=dose?singleDosePreviewHtml(dose).replace('<details class="result-disclosure single-dose-preview">','<details open class="result-disclosure single-dose-preview">'):'<p class="muted">이 결과는 성분 중복 확인입니다. 공식 용량 기준 비교 데이터는 없습니다.</p>';
-  const drugs=(report.products || []).map(p=>'<article class="dashboard-drug"><strong>'+esc(p.name)+'</strong><div class="ingredient-tags">'+report.ingredients.filter(i=>i.products.some(x=>x.code===p.code)).map(i=>'<span class="'+(i.duplicate?'duplicate':'')+'">'+esc(i.ingredient)+'</span>').join('')+'</div></article>').join('');
-  return '<div class="dashboard-caption"><h3>확인 결과</h3><p>약 '+report.product_count+'개 · 공식 성분 '+report.ingredients.length+'종을 확인했어요.</p></div>'+metrics+'<div class="result-dashboard-grid"><section class="dashboard-panel"><h3>성분별 비교</h3>'+duplicateList+comparison+'</section><aside class="dashboard-panel"><h3>약별 성분</h3>'+drugs+'<p class="muted">진한 태그는 다른 약과 겹치는 성분입니다.</p><details class="result-disclosure"><summary>제품별 용법·주의사항</summary><div class="detail-content">'+productCards+'</div></details></aside></div><details class="result-disclosure dashboard-all-details"><summary>전체 결과·근거 자세히 보기</summary><div class="detail-content">'+details+'</div></details>';
+  const ingredients=report.ingredients || [], products=report.products || [];
+  const duplicates=ingredients.filter(i=>i.duplicate),dose=report.daily_dose;
+  const unknownProducts=report.unconfirmed_products || [];
+  const amountUnknown=products.filter(p=>p.amount_unconfirmed);
+  const nameFor=p=>p.name || '제품명 확인 필요';
+  const duplicateList=duplicates.length?duplicates.map(i=>'<article class="duplicate-ingredient"><h4>'+esc(i.ingredient)+'</h4><p class="text-status">같은 성분이 아래 약에 함께 들어 있어요.</p><ul class="related-drugs">'+i.products.map(p=>'<li>'+productPhotoHtml(p.code,nameFor(p))+'<strong class="medicine-name">'+esc(nameFor(p))+'</strong></li>').join('')+'</ul></article>').join(''):'<p class="text-status">확인한 성분에서는 중복이 발견되지 않았어요.'+(unknownProducts.length?' 다만 일부 약의 성분은 확인하지 못했어요.':'')+'</p>';
+  const drugList=products.map(p=>{
+    const included=ingredients.filter(i=>i.products.some(x=>String(x.code)===String(p.code)));
+    return '<article class="readable-drug"><div class="product-identity">'+productPhotoHtml(p.code,nameFor(p))+'<div><h4 class="medicine-name">'+esc(nameFor(p))+'</h4>'+(p.ingredient_identity_partial?'<p class="text-status">이 약의 성분 정보를 일부 확인하지 못했어요.</p>':'')+(p.amount_unconfirmed?'<p>함량을 확인하지 못해 확인된 성분명으로 중복 여부를 살펴봤어요.</p>':'')+'</div></div><ul class="readable-ingredients">'+(included.length?included.map(i=>'<li><strong class="ingredient-name">'+esc(i.ingredient)+'</strong><span class="text-status">'+(i.duplicate?'다른 약과 겹치는 성분':'확인한 다른 약에서는 같은 성분이 발견되지 않았어요')+'</span></li>').join(''):'<li>이 약의 유효성분을 확인하지 못했어요.</li>')+'</ul></article>';
+  }).join('');
+  const next='<section class="dashboard-panel result-next"><h3>3. 무엇을 확인하면 되나요?</h3>'+(unknownProducts.length?'<div class="notice amber"><strong>일부 약 정보를 읽지 못했어요.</strong><p>'+unknownProducts.map(p=>esc(nameFor(p))).join(' · ')+'</p><p>제품명과 성분표가 선명한 사진으로 다시 확인해 주세요. 아래 결과는 확인된 성분만 비교했어요.</p></div>':'')+(amountUnknown.length?'<p>함량 정보를 확인하지 못한 약: '+amountUnknown.map(p=>esc(nameFor(p))).join(' · ')+'. 용량 비교는 아래 상세 정보에서 확인해 주세요.</p>':'')+'<ul><li>사진 속 약과 화면의 제품명·함량·제형이 같은지 확인해 주세요.</li><li>'+(duplicates.length?'성분이 겹치는 약을 함께 복용하기 전에는 의사·약사에게 확인해 주세요.':'중복 성분이 없더라도 함께 복용해도 된다는 뜻은 아니에요.')+'</li></ul><div class="result-limits"><h4>이 결과로 알 수 없는 것</h4><p>확인된 공식 성분의 중복을 살펴본 결과예요. 다른 성분 사이의 상호작용이나 개인별 복용 가능 여부는 판단하지 않아요.</p><p>용량·비율은 표시된 조건에 따른 참고 비교예요. 기준을 넘지 않았더라도 병용 안전을 뜻하지 않으므로 복용 전 의사·약사와 상담하세요.</p></div></section>';
+  const comparison=dose?singleDosePreviewHtml(dose).replace('<details class="result-disclosure single-dose-preview">','<details open class="result-disclosure single-dose-preview">'):'<p>비교할 기준이 없어 판단하지 못했어요. 현재 결과에서는 성분 중복만 확인할 수 있어요.</p>';
+  return '<div class="dashboard-caption"><h3>중복 성분 확인 결과</h3><p>약 '+esc(report.product_count)+'개에서 확인한 유효성분을 살펴봤어요.</p></div><section class="dashboard-panel duplicate-overview"><h3>1. 무엇이 겹치나요?</h3>'+duplicateList+'<p class="result-boundary">중복 성분이 없더라도 함께 복용해도 된다는 뜻은 아니에요.</p></section><section class="dashboard-panel confirmed-drugs"><h3>2. 어떤 약에 들어 있나요?</h3>'+drugList+'<p class="photo-memory-note">사진은 이 화면에서만 보관해요. 새로고침 후에는 사진을 다시 등록해 주세요. 한 사진에 여러 약이 함께 있을 수 있어요.</p></section>'+next+'<details class="result-disclosure reference-overview dashboard-panel"><summary>용량·비율·공식 기준 상세 보기</summary><div class="detail-content">'+comparison+'</div></details><details class="result-disclosure dashboard-all-details dashboard-panel"><summary>계산식·공식 코드·긴 원문 보기</summary><div class="detail-content">'+details+'</div></details>';
 }
+
+// Presentation layer: move existing controls once; retain their values and handlers.
+function initializePageUI() {
+  const main=document.querySelector('main');
+  // Put primary content before general guidance without changing reading order.
+  main.append(document.querySelector('main > .notice:not(#errorHelp)'),document.querySelector('main > .support-guide'),$('#saveNotice'),document.querySelector('main > footer'));
+  $('#resultStep .sectionhead h2').hidden=true;
+  $('#resultStep .sectionhead').append($('#backToQuantity'),$('#download'));
+  const upload=document.querySelector('.photo-analysis-panel');
+  const review=document.querySelector('.product-review-panel');
+  const profile=document.querySelector('.user-info-panel');
+  const fieldset=document.querySelector('#userProfileDialog .user-profile');
+  document.querySelector('#profilePage').append(profile,fieldset);
+  profile.querySelector('h3').textContent='필요한 정보만 입력하세요';
+  document.querySelector('#openUserProfile').hidden=true;
+  document.querySelector('.wizard-actions').classList.add('review-actions');
+  review.append(document.querySelector('.review-actions'),$('#stepOneHint'));
+  // Keep the legacy dialog intact for compatibility; the optional fields live on their page.
+  $('#openUserProfile').onclick=()=>{navigate('profile');$('#ageYears').focus();};
+  document.querySelector('header .logo').setAttribute('href','#home');
+  document.querySelector('header .logo').dataset.page='home';
+  document.querySelector('header .logo').innerHTML='<img class="brand-logo" src="/brand-logo.png" alt="medicineat" width="2098" height="749">';
+  const pages={
+    home:['시작하기','약 성분 확인, 차근차근.','사진 속 제품을 확인하고 공식 성분을 비교하세요.'],
+    upload:['01 · 약 등록','어떤 약을 확인할까요?','한 사진에 여러 약이 있어도, 여러 장을 올려도 괜찮아요.'],
+    review:['02 · 제품 확인','사진과 같은 제품인지 확인해요.','선택이 필요한 후보를 확인하고 비교할 제품을 정리하세요.'],
+    results:['03 · 분석 결과','확인한 성분을 한눈에.','중복 성분과 공식 자료에서 확인된 정보를 살펴보세요.'],
+    profile:['선택 입력','사용자 정보','중복 성분 확인은 나이·체중 입력 없이도 가능합니다.']
+  };
+  let active='home';
+  let hadResult=false;
+  function sync() {
+    const count=photoGroups.filter(g=>g.status==='choice').length;
+    $('#reviewCount').textContent=count?count+' 선택 필요':basket.length+'개';
+    $('#historyCount').textContent=photoGroups.length+'건';
+    $('#historyPanel').hidden=!photoGroups.length;
+    $('#historyPanel').open=photoGroups.some(g=>g.status!=='applied');
+    $('#reviewEmpty').hidden=Boolean(basket.length || photoGroups.length || candidates.length);
+    if(lastReport)hadResult=true;
+    if(active==='results') {
+      $('#resultStep').hidden=!lastReport;
+      $('#emptyResults').hidden=Boolean(lastReport);
+      $('#emptyResultHelp').textContent=hadResult?'제품 목록 또는 입력값이 변경되었습니다. 제품 확인에서 성분 확인하기를 다시 눌러 주세요.':'제품을 확인한 뒤 ‘성분 확인하기’를 누르면 결과가 표시됩니다.';
+    }
+    const running=busy || batchRunning || selectingProduct;
+    $('#workProgress').hidden=!running;
+    main.setAttribute('aria-busy',String(running));
+    if(running)$('#workProgressText').textContent=[$('#batchProgress').textContent,$('#status').textContent].filter(Boolean).join(' · ') || '제품 정보를 확인하고 있습니다…';
+  }
+  function navigate(name,{focus=true,hash=true}={}) {
+    if(!pages[name])name='home';
+    if(busy || batchRunning || selectingProduct){say('진행 중인 작업이 끝난 뒤 이동해 주세요.');return false;}
+    active=name;
+    $('#homePage').hidden=name!=='home';
+    $('#profilePage').hidden=name!=='profile';
+    $('#photoStep').hidden=!['upload','review'].includes(name);
+    upload.hidden=name!=='upload';review.hidden=name!=='review';
+    $('#resultStep').hidden=name!=='results' || !lastReport;
+    $('#emptyResults').hidden=name!=='results' || Boolean(lastReport);
+    $('#basket').hidden=true;
+    const [eyebrow,title,description]=pages[name];
+    $('#pageEyebrow').textContent=eyebrow;$('#pageTitle').textContent=title;$('#pageDescription').textContent=description;
+    document.querySelectorAll('.page-nav [data-page]').forEach(link=>{
+      if(link.dataset.page===name)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+    });
+    document.body.classList.remove('menu-open');$('#menuToggle').setAttribute('aria-expanded','false');
+    if(hash && location.hash!=='#'+name)history.replaceState(null,'','#'+name);
+    sync();
+    if(focus){$('#pageTitle').focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'});}
+    return true;
+  }
+  window.runflowUI={navigate,sync};
+  const loadDemo=$('#demo').onclick;
+  $('#demo').onclick=async event=>{await loadDemo(event);if(demoMode && basket.length)navigate('review');};
+  document.addEventListener('click',event=>{
+    const link=event.target.closest('[data-page]');
+    if(link){event.preventDefault();navigate(link.dataset.page);}
+  });
+  $('#menuToggle').onclick=()=>{
+    const open=document.body.classList.toggle('menu-open');$('#menuToggle').setAttribute('aria-expanded',String(open));
+  };
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape' && document.body.classList.contains('menu-open')){
+      document.body.classList.remove('menu-open');$('#menuToggle').setAttribute('aria-expanded','false');$('#menuToggle').focus();
+    }
+  });
+  window.addEventListener('hashchange',()=>{
+    if(!navigate(location.hash.slice(1),{hash:false}))history.replaceState(null,'','#'+active);
+  });
+  // Observe existing render targets; do not initiate requests or change analysis data.
+  const observer=new MutationObserver(sync);
+  ['batchChoices','stepOneProducts','result','status','batchProgress','basketList'].forEach(id=>observer.observe($('#'+id),{childList:true,subtree:true,characterData:true}));
+  observer.observe($('#analyze'),{attributes:true,attributeFilter:['disabled']});
+  navigate(location.hash.slice(1) || 'home',{focus:false});
+}
+if(typeof document.getElementById==='function')initializePageUI();
